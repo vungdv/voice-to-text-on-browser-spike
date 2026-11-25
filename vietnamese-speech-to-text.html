@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f7f5">
+  <title>Vietnamese Speech to Text</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f7f7f5; color: #202124; }
+    main { width: min(100% - 32px, 620px); margin: 0 auto; padding: max(28px, env(safe-area-inset-top)) 0 max(28px, env(safe-area-inset-bottom)); }
+    h1 { font-size: 26px; margin: 8px 0; }
+    .sub { color: #666; line-height: 1.5; margin: 0 0 24px; }
+    .panel { background: white; border: 1px solid #e5e5e2; border-radius: 18px; padding: 18px; box-shadow: 0 4px 18px #00000008; }
+    .status { display: flex; align-items: center; gap: 9px; color: #666; font-size: 14px; margin-bottom: 16px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; }
+    .dot.live { background: #e5484d; box-shadow: 0 0 0 5px #e5484d20; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+    button { border: 0; border-radius: 12px; padding: 14px 18px; font-size: 16px; font-weight: 600; min-height: 48px; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .primary { background: #1769e0; color: white; flex: 1; }
+    .stop { background: #f0f0ee; color: #222; flex: 1; }
+    .secondary { background: #f0f0ee; color: #222; }
+    .output-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 24px 0 10px; }
+    h2 { font-size: 16px; margin: 0; }
+    textarea { display: block; width: 100%; min-height: 220px; resize: vertical; border: 1px solid #dededb; border-radius: 14px; padding: 15px; font: 17px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; background: white; color: #202124; }
+    textarea:focus { outline: 2px solid #1769e055; border-color: #1769e0; }
+    .hint { font-size: 13px; color: #777; line-height: 1.5; margin-top: 14px; }
+    .error { color: #b42318; background: #fff1f0; border-radius: 10px; padding: 12px; margin-top: 14px; line-height: 1.45; font-size: 14px; display: none; }
+    .foot { color: #888; font-size: 12px; line-height: 1.5; margin-top: 18px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Vietnamese Speech to Text</h1>
+  <p class="sub">Nói tiếng Việt, ứng dụng sẽ chuyển lời nói thành văn bản.</p>
+
+  <section class="panel">
+    <div class="status"><span id="dot" class="dot"></span><span id="status">Đang kiểm tra trình duyệt…</span></div>
+    <div class="controls">
+      <button id="start" class="primary">🎙 Bắt đầu nói</button>
+      <button id="stop" class="stop" disabled>Dừng</button>
+    </div>
+    <div id="error" class="error" role="alert"></div>
+
+    <div class="output-head">
+      <h2>Văn bản nhận được</h2>
+      <button id="copy" class="secondary">Sao chép</button>
+    </div>
+    <textarea id="result" placeholder="Văn bản bạn nói sẽ xuất hiện ở đây…" spellcheck="false"></textarea>
+    <div class="controls" style="margin-top:10px">
+      <button id="clear" class="secondary">Xóa văn bản</button>
+    </div>
+    <p class="hint">Mẹo: Cho phép trình duyệt truy cập microphone khi được hỏi. Nói rõ ràng và chờ một chút sau mỗi câu để trình duyệt hoàn tất nhận dạng.</p>
+  </section>
+  <p class="foot">Spike thử nghiệm sử dụng Web Speech API của trình duyệt. Kết quả nhận dạng phụ thuộc vào trình duyệt, iOS và kết nối mạng.</p>
+</main>
+<script>
+(() => {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const startBtn = document.getElementById('start');
+  const stopBtn = document.getElementById('stop');
+  const resultBox = document.getElementById('result');
+  const status = document.getElementById('status');
+  const dot = document.getElementById('dot');
+  const errorBox = document.getElementById('error');
+  let recognition;
+  let finalText = '';
+  let listening = false;
+
+  function setStatus(message, live = false) {
+    status.textContent = message;
+    dot.classList.toggle('live', live);
+  }
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.style.display = 'block';
+  }
+  function hideError() {
+    errorBox.textContent = '';
+    errorBox.style.display = 'none';
+  }
+
+  if (!SpeechRecognition) {
+    setStatus('Trình duyệt này chưa hỗ trợ Speech Recognition.');
+    startBtn.disabled = true;
+    showError('Không tìm thấy Web Speech API. Hãy thử Safari hoặc Chrome phiên bản mới trên iPhone. Nếu vẫn không hỗ trợ, cần dùng dịch vụ nhận dạng giọng nói qua API làm phương án thay thế.');
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'vi-VN';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    listening = true;
+    hideError();
+    setStatus('Đang nghe… Hãy nói tiếng Việt.', true);
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+  };
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalText += transcript.trim() + ' ';
+      } else {
+        interim += transcript;
+      }
+    }
+    resultBox.value = (finalText + interim).trim();
+    resultBox.scrollTop = resultBox.scrollHeight;
+  };
+
+  recognition.onerror = (event) => {
+    const messages = {
+      'not-allowed': 'Bạn chưa cấp quyền microphone. Hãy mở cài đặt trang web và cho phép sử dụng microphone.',
+      'service-not-allowed': 'Dịch vụ nhận dạng giọng nói không được phép trên trình duyệt này.',
+      'audio-capture': 'Không tìm thấy microphone hoặc không thể truy cập microphone.',
+      'network': 'Lỗi mạng khi nhận dạng giọng nói. Hãy kiểm tra kết nối Internet.',
+      'no-speech': 'Chưa phát hiện giọng nói. Hãy thử nói lại.'
+    };
+    showError(messages[event.error] || `Lỗi nhận dạng giọng nói: ${event.error}`);
+  };
+
+  recognition.onend = () => {
+    listening = false;
+    setStatus('Đã dừng nghe.');
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  };
+
+  startBtn.addEventListener('click', () => {
+    if (listening) return;
+    finalText = resultBox.value.trim();
+    if (finalText) finalText += ' ';
+    try { recognition.start(); }
+    catch (e) { showError('Không thể bắt đầu. Hãy đợi một chút rồi thử lại.'); }
+  });
+
+  stopBtn.addEventListener('click', () => {
+    if (recognition && listening) recognition.stop();
+  });
+
+  document.getElementById('clear').addEventListener('click', () => {
+    finalText = '';
+    resultBox.value = '';
+    hideError();
+  });
+
+  document.getElementById('copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(resultBox.value);
+      document.getElementById('copy').textContent = 'Đã sao chép ✓';
+      setTimeout(() => document.getElementById('copy').textContent = 'Sao chép', 1600);
+    } catch {
+      resultBox.focus();
+      resultBox.select();
+      showError('Không thể tự sao chép. Văn bản đã được chọn; hãy chọn Copy.');
+    }
+  });
+
+  setStatus('Sẵn sàng. Nhấn “Bắt đầu nói”.');
+})();
+</script>
+</body>
+</html>
